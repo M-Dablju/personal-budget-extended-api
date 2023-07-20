@@ -108,9 +108,7 @@ app.delete('/envelopes/:id', async (req, res) => {
 
     await pool.query('DELETE FROM envelopes WHERE id = $1', [id]);
 
-    const totalBudgetResult = await pool.query('SELECT SUM(budget) AS total_budget FROM envelopes');
-    const currentTotalBudget = totalBudgetResult.rows[0].total_budget;
-    await pool.query('UPDATE budget SET total_budget = $1', [currentTotalBudget - envelope.balance]);
+    await pool.query('UPDATE budget SET total_budget = total_budget - $1', [envelope.budget]);
 
     const message = `Envelope "${envelope.title}" was deleted.`;
     res.json({ message });
@@ -172,7 +170,18 @@ app.get('/', async (req, res) => {
   try {
     const totalBudgetResult = await pool.query('SELECT total_budget FROM budget');
     const totalBudget = totalBudgetResult.rows[0].total_budget;
-    res.send(`Total Budget: ${totalBudget}€`);
+
+    const envelopesResult = await pool.query('SELECT * FROM envelopes');
+    const envelopes = envelopesResult.rows;
+
+    let envelopesSummary = '';
+    envelopes.forEach((envelope) => {
+      envelopesSummary += `<p>Envelope: ${envelope.title}</p>`;
+      envelopesSummary += `<p>Budget: ${envelope.budget}€</p>`;
+      envelopesSummary += `<p>Balance: ${envelope.balance}€</p><br>`;
+    });
+
+    res.send(`<p>Total Budget: ${totalBudget}€</p><br>${envelopesSummary}`);
   } catch (error) {
     console.error('Error retrieving total budget:', error);
     res.status(500).json({ error: 'An error occurred while retrieving the total budget.' });
