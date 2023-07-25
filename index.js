@@ -2,7 +2,7 @@ const express = require('express');
 const app = express();
 const pool = require('./db');
 
-app.use(express.json()); // Middleware to parse JSON requests
+app.use(express.json());
 
 // Endpoint to generate individual budget envelopes
 app.post('/envelopes', async (req, res) => {
@@ -33,6 +33,7 @@ app.get('/envelopes', async (req, res) => {
   try {
     const result = await pool.query('SELECT * FROM envelopes');
     const envelopes = result.rows;
+
     res.json(envelopes);
   } catch (error) {
     console.error('Error retrieving envelopes:', error);
@@ -163,6 +164,101 @@ app.post('/envelopes/transfer/:from/:to', async (req, res) => {
   } catch (error) {
     console.error('Error transferring budget:', error);
     res.status(500).json({ error: 'An error occurred while transferring the budget.' });
+  }
+});
+
+// Endpoint to add a new transaction
+app.post('/transactions', async (req, res) => {
+  const { envelopeId, date, amount, description } = req.body;
+
+  if (!envelopeId || !date || !amount || typeof amount !== 'number' || amount === 0) {
+    return res.status(400).json({ error: 'Invalid request. Envelope ID, date, and amount are required, and amount must be a non-zero number.' });
+  }
+
+  try {
+    const envelopeResult = await pool.query('SELECT * FROM envelopes WHERE id = $1', [envelopeId]);
+    const envelope = envelopeResult.rows[0];
+
+    if (!envelope) {
+      return res.status(404).json({ error: 'Envelope not found.' });
+    }
+
+    const result = await pool.query('INSERT INTO transactions (envelope_id, date, amount, description) VALUES ($1, $2, $3, $4) RETURNING *', [envelopeId, date, amount, description]);
+    const newTransaction = result.rows[0];
+
+    envelope.balance = +envelope.balance + amount;
+    await pool.query('UPDATE envelopes SET balance = $1 WHERE id = $2', [envelope.balance, envelopeId]);
+
+    res.status(201).json(newTransaction);
+  } catch (error) {
+    console.error('Error adding transaction:', error);
+    res.status(500).json({ error: 'An error occurred while adding the transaction.' });
+  }
+});
+
+// Endpoint to retrieve all transactions
+app.get('/transactions', async (req, res) => {
+  try {
+    const result = await pool.query('SELECT * FROM transactions');
+    const transactions = result.rows;
+
+    res.json(transactions);
+  } catch (error) {
+    console.error('Error retrieving transactions:', error);
+    res.status(500).json({ error: 'An error occurred while retrieving transactions.' });
+  }
+});
+
+// Endpoint to retrieve a specific transaction
+app.get('/transactions/:id', async (req, res) => {
+  const id = +req.params.id;
+
+  try {
+    const result = await pool.query('SELECT * FROM transactions WHERE id = $1', [id]);
+    const transaction = result.rows[0];
+
+    if (!transaction) {
+      return res.status(404).json({ error: 'Transaction not found.' });
+    }
+
+    res.json(transaction);
+  } catch (error) {
+    console.error('Error retrieving transaction:', error);
+    res.status(500).json({ error: 'An error occurred while retrieving the transaction.' });
+  }
+});
+
+// Endpoint to delete specific transaction
+app.delete('/transactions/:id', async (req, res) => {
+  const id = +req.params.id;
+
+  try {
+    const transactionCheckResult = await pool.query('SELECT * FROM transactions WHERE id = $1', [id]);
+    const existingTransaction = transactionCheckResult.rows[0];
+
+    if (!existingTransaction) {
+      return res.status(404).json({ error: 'Transaction not found.' });
+    }
+
+    const originalAmount = existingTransaction.amount;
+    const envelopeId = existingTransaction.envelope_id;
+
+    await pool.query('DELETE FROM transactions WHERE id = $1', [id]);
+
+    const envelopeResult = await pool.query('SELECT * FROM envelopes WHERE id = $1', [envelopeId]);
+    const envelope = envelopeResult.rows[0];
+
+    if (envelope) {
+      envelope.balance -= originalAmount;
+      await pool.query('UPDATE envelopes SET balance = $1 WHERE id = $2', [envelope.balance, envelopeId]);
+    }
+
+    const message = `Transaction with ID ${id} was deleted.`;
+
+    res.json({ message });
+  } catch (error) {
+    console.error('Error deleting transaction:', error);
+    res.status(500).json({ error: 'An error occurred while deleting the transaction.' });
   }
 });
 
